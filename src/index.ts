@@ -27,6 +27,7 @@ interface WhoopConfig {
 class WhoopMCPServer {
   private server: Server;
   private config: WhoopConfig;
+  private lastCall = 0;
 
   constructor() {
     this.config = {
@@ -86,8 +87,16 @@ class WhoopMCPServer {
   }
 
   private async fetchWhoop(endpoint: string): Promise<any> {
+    // Rate limiting: enforce 1 request per second max
+    const now = Date.now();
+    const timeSinceLastCall = now - this.lastCall;
+    if (timeSinceLastCall < 1000) {
+      await new Promise(r => setTimeout(r, 1000 - timeSinceLastCall));
+    }
+    this.lastCall = Date.now();
+
     const token = await this.getAccessToken();
-    
+
     const response = await fetch(`${WHOOP_API_BASE}${endpoint}`, {
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -101,6 +110,23 @@ class WhoopMCPServer {
     }
 
     return response.json();
+  }
+
+  private async fetchWithRetry(endpoint: string, retries = 3): Promise<any> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await this.fetchWhoop(endpoint);
+      } catch (e) {
+        if (i === retries - 1) throw e;
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+      }
+    }
+  }
+
+  private validateDate(date: string): void {
+    if (!date.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)) {
+      throw new Error('Invalid date format. Use ISO 8601: YYYY-MM-DDTHH:MM:SSZ');
+    }
   }
 
   private setupHandlers() {
@@ -138,7 +164,7 @@ class WhoopMCPServer {
 
       switch (uri) {
         case 'whoop://recovery/latest': {
-          const data = await this.fetchWhoop('/recovery');
+          const data = await this.fetchWithRetry('/recovery');
           const latest = data.records?.[0];
           return {
             contents: [
@@ -152,7 +178,7 @@ class WhoopMCPServer {
         }
 
         case 'whoop://sleep/latest': {
-          const data = await this.fetchWhoop('/activity/sleep');
+          const data = await this.fetchWithRetry('/activity/sleep');
           const latest = data.records?.[0];
           return {
             contents: [
@@ -166,7 +192,7 @@ class WhoopMCPServer {
         }
 
         case 'whoop://cycle/latest': {
-          const data = await this.fetchWhoop('/cycle');
+          const data = await this.fetchWithRetry('/cycle');
           const latest = data.records?.[0];
           return {
             contents: [
@@ -180,7 +206,7 @@ class WhoopMCPServer {
         }
 
         case 'whoop://user/profile': {
-          const data = await this.fetchWhoop('/user/profile/basic');
+          const data = await this.fetchWithRetry('/user/profile/basic');
           return {
             contents: [
               {
@@ -255,47 +281,59 @@ class WhoopMCPServer {
 
       switch (name) {
         case 'get_recovery': {
+          if (params.start) this.validateDate(params.start);
+          if (params.end) this.validateDate(params.end);
+
           const query = new URLSearchParams();
           if (params.start) query.append('start', params.start);
           if (params.end) query.append('end', params.end);
           if (params.limit) query.append('limit', params.limit.toString());
 
-          const data = await this.fetchWhoop(`/recovery?${query.toString()}`);
+          const data = await this.fetchWithRetry(`/recovery?${query.toString()}`);
           return {
             content: [{ type: 'text', text: JSON.stringify(data.records || [], null, 2) }],
           };
         }
 
         case 'get_sleep': {
+          if (params.start) this.validateDate(params.start);
+          if (params.end) this.validateDate(params.end);
+
           const query = new URLSearchParams();
           if (params.start) query.append('start', params.start);
           if (params.end) query.append('end', params.end);
           if (params.limit) query.append('limit', params.limit.toString());
 
-          const data = await this.fetchWhoop(`/activity/sleep?${query.toString()}`);
+          const data = await this.fetchWithRetry(`/activity/sleep?${query.toString()}`);
           return {
             content: [{ type: 'text', text: JSON.stringify(data.records || [], null, 2) }],
           };
         }
 
         case 'get_workouts': {
+          if (params.start) this.validateDate(params.start);
+          if (params.end) this.validateDate(params.end);
+
           const query = new URLSearchParams();
           if (params.start) query.append('start', params.start);
           if (params.end) query.append('end', params.end);
           if (params.limit) query.append('limit', params.limit.toString());
 
-          const data = await this.fetchWhoop(`/activity/workout?${query.toString()}`);
+          const data = await this.fetchWithRetry(`/activity/workout?${query.toString()}`);
           return {
             content: [{ type: 'text', text: JSON.stringify(data.records || [], null, 2) }],
           };
         }
 
         case 'get_hrv': {
+          if (params.start) this.validateDate(params.start);
+          if (params.end) this.validateDate(params.end);
+
           const query = new URLSearchParams();
           if (params.start) query.append('start', params.start);
           if (params.end) query.append('end', params.end);
 
-          const data = await this.fetchWhoop(`/cycle?${query.toString()}`);
+          const data = await this.fetchWithRetry(`/cycle?${query.toString()}`);
           const hrvData = data.records?.map((cycle: any) => ({
             created_at: cycle.created_at,
             hrv_rmssd_milli: cycle.score?.hrv_rmssd_milli,
