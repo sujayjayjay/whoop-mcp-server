@@ -11,12 +11,12 @@ MCP server for accessing Whoop health data (recovery, sleep, strain, HRV) via th
 
 ## Setup
 
-### 1. Get Whoop API Key
+### 1. Get Whoop OAuth Credentials
 
 1. Go to https://developer.whoop.com
 2. Create an account / sign in
 3. Create a new application
-4. Copy your API key
+4. Copy your Client ID and Client Secret
 
 ### 2. Install
 
@@ -27,18 +27,22 @@ npm run build
 
 ### 3. Configure
 
-Set your Whoop API key:
+Set your Whoop OAuth credentials:
 
 ```bash
-export WHOOP_API_KEY="your-api-key-here"
+export WHOOP_CLIENT_ID="your-client-id"
+export WHOOP_CLIENT_SECRET="your-client-secret"
 ```
 
 Or add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
-echo 'export WHOOP_API_KEY="your-key"' >> ~/.zshrc
+echo 'export WHOOP_CLIENT_ID="your-client-id"' >> ~/.zshrc
+echo 'export WHOOP_CLIENT_SECRET="your-client-secret"' >> ~/.zshrc
 source ~/.zshrc
 ```
+
+Or create a `.env` file in the project root (see `.env.example`)
 
 ### 4. Test
 
@@ -57,7 +61,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "node",
       "args": ["/path/to/whoop-mcp-server/dist/index.js"],
       "env": {
-        "WHOOP_API_KEY": "your-api-key-here"
+        "WHOOP_CLIENT_ID": "your-client-id",
+        "WHOOP_CLIENT_SECRET": "your-client-secret"
       }
     }
   }

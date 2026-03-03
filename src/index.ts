@@ -3,17 +3,6 @@
  * Whoop MCP Server
  * 
  * Provides access to Whoop health data via Model Context Protocol
- * 
- * Resources:
- * - whoop://recovery - Latest recovery score and metrics
- * - whoop://sleep - Latest sleep data
- * - whoop://strain - Latest strain and workout data
- * - whoop://cycle - Latest physiological cycle
- * 
- * Tools:
- * - get_recovery - Get recovery data for specific date range
- * - get_sleep - Get sleep data for specific date range
- * - get_workouts - Get workout/strain data
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -26,9 +15,13 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 const WHOOP_API_BASE = 'https://api.whoop.com/developer/v1';
+const WHOOP_AUTH_URL = 'https://api.whoop.com/oauth/oauth2/token';
 
 interface WhoopConfig {
-  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+  accessToken?: string;
+  tokenExpiry?: number;
 }
 
 class WhoopMCPServer {
@@ -37,11 +30,12 @@ class WhoopMCPServer {
 
   constructor() {
     this.config = {
-      apiKey: process.env.WHOOP_API_KEY || '',
+      clientId: process.env.WHOOP_CLIENT_ID || '',
+      clientSecret: process.env.WHOOP_CLIENT_SECRET || '',
     };
 
-    if (!this.config.apiKey) {
-      console.error('ERROR: WHOOP_API_KEY environment variable is required');
+    if (!this.config.clientId || !this.config.clientSecret) {
+      console.error('ERROR: WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET environment variables are required');
       process.exit(1);
     }
 
@@ -61,23 +55,55 @@ class WhoopMCPServer {
     this.setupHandlers();
   }
 
+  private async getAccessToken(): Promise<string> {
+    if (this.config.accessToken && this.config.tokenExpiry && Date.now() < this.config.tokenExpiry) {
+      return this.config.accessToken;
+    }
+
+    const response = await fetch(WHOOP_AUTH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: this.config.clientId,
+        client_secret: this.config.clientSecret,
+        scope: 'read:recovery read:sleep read:workout read:cycles read:profile',
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Whoop OAuth error: ${response.status} ${error}`);
+    }
+
+    const data: any = await response.json();
+    this.config.accessToken = data.access_token || "";
+    this.config.tokenExpiry = Date.now() + (data.expires_in * 1000) - 60000;
+
+    return this.config.accessToken;
+  }
+
   private async fetchWhoop(endpoint: string): Promise<any> {
+    const token = await this.getAccessToken();
+    
     const response = await fetch(`${WHOOP_API_BASE}${endpoint}`, {
       headers: {
-        'Authorization': `Bearer ${this.config.apiKey}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     });
 
     if (!response.ok) {
-      throw new Error(`Whoop API error: ${response.status} ${response.statusText}`);
+      const error = await response.text();
+      throw new Error(`Whoop API error: ${response.status} ${error}`);
     }
 
     return response.json();
   }
 
   private setupHandlers() {
-    // List available resources
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
       resources: [
         {
@@ -107,9 +133,8 @@ class WhoopMCPServer {
       ],
     }));
 
-    // Read resource contents
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const uri = request.params.uri;
+      const uri = request.params.uri.toString();
 
       switch (uri) {
         case 'whoop://recovery/latest': {
@@ -172,7 +197,6 @@ class WhoopMCPServer {
       }
     });
 
-    // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
@@ -181,18 +205,9 @@ class WhoopMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              start: {
-                type: 'string',
-                description: 'Start date (ISO 8601 format, e.g. 2024-01-01T00:00:00Z)',
-              },
-              end: {
-                type: 'string',
-                description: 'End date (ISO 8601 format)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of records to return (default: 7)',
-              },
+              start: { type: 'string', description: 'Start date (ISO 8601)' },
+              end: { type: 'string', description: 'End date (ISO 8601)' },
+              limit: { type: 'number', description: 'Max records (default: 7)' },
             },
           },
         },
@@ -202,18 +217,9 @@ class WhoopMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              start: {
-                type: 'string',
-                description: 'Start date (ISO 8601 format)',
-              },
-              end: {
-                type: 'string',
-                description: 'End date (ISO 8601 format)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of records to return (default: 7)',
-              },
+              start: { type: 'string', description: 'Start date (ISO 8601)' },
+              end: { type: 'string', description: 'End date (ISO 8601)' },
+              limit: { type: 'number', description: 'Max records (default: 7)' },
             },
           },
         },
@@ -223,18 +229,9 @@ class WhoopMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              start: {
-                type: 'string',
-                description: 'Start date (ISO 8601 format)',
-              },
-              end: {
-                type: 'string',
-                description: 'End date (ISO 8601 format)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of records to return (default: 7)',
-              },
+              start: { type: 'string', description: 'Start date (ISO 8601)' },
+              end: { type: 'string', description: 'End date (ISO 8601)' },
+              limit: { type: 'number', description: 'Max records (default: 7)' },
             },
           },
         },
@@ -244,83 +241,61 @@ class WhoopMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              start: {
-                type: 'string',
-                description: 'Start date (ISO 8601 format)',
-              },
-              end: {
-                type: 'string',
-                description: 'End date (ISO 8601 format)',
-              },
+              start: { type: 'string', description: 'Start date (ISO 8601)' },
+              end: { type: 'string', description: 'End date (ISO 8601)' },
             },
           },
         },
       ],
     }));
 
-    // Handle tool calls
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+      const params = args as any || {};
 
       switch (name) {
         case 'get_recovery': {
-          const params = new URLSearchParams();
-          if (args.start) params.append('start', args.start);
-          if (args.end) params.append('end', args.end);
-          if (args.limit) params.append('limit', args.limit.toString());
+          const query = new URLSearchParams();
+          if (params.start) query.append('start', params.start);
+          if (params.end) query.append('end', params.end);
+          if (params.limit) query.append('limit', params.limit.toString());
 
-          const data = await this.fetchWhoop(`/recovery?${params.toString()}`);
+          const data = await this.fetchWhoop(`/recovery?${query.toString()}`);
           return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(data.records || [], null, 2),
-              },
-            ],
+            content: [{ type: 'text', text: JSON.stringify(data.records || [], null, 2) }],
           };
         }
 
         case 'get_sleep': {
-          const params = new URLSearchParams();
-          if (args.start) params.append('start', args.start);
-          if (args.end) params.append('end', args.end);
-          if (args.limit) params.append('limit', args.limit.toString());
+          const query = new URLSearchParams();
+          if (params.start) query.append('start', params.start);
+          if (params.end) query.append('end', params.end);
+          if (params.limit) query.append('limit', params.limit.toString());
 
-          const data = await this.fetchWhoop(`/activity/sleep?${params.toString()}`);
+          const data = await this.fetchWhoop(`/activity/sleep?${query.toString()}`);
           return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(data.records || [], null, 2),
-              },
-            ],
+            content: [{ type: 'text', text: JSON.stringify(data.records || [], null, 2) }],
           };
         }
 
         case 'get_workouts': {
-          const params = new URLSearchParams();
-          if (args.start) params.append('start', args.start);
-          if (args.end) params.append('end', args.end);
-          if (args.limit) params.append('limit', args.limit.toString());
+          const query = new URLSearchParams();
+          if (params.start) query.append('start', params.start);
+          if (params.end) query.append('end', params.end);
+          if (params.limit) query.append('limit', params.limit.toString());
 
-          const data = await this.fetchWhoop(`/activity/workout?${params.toString()}`);
+          const data = await this.fetchWhoop(`/activity/workout?${query.toString()}`);
           return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(data.records || [], null, 2),
-              },
-            ],
+            content: [{ type: 'text', text: JSON.stringify(data.records || [], null, 2) }],
           };
         }
 
         case 'get_hrv': {
-          const params = new URLSearchParams();
-          if (args.start) params.append('start', args.start);
-          if (args.end) params.append('end', args.end);
+          const query = new URLSearchParams();
+          if (params.start) query.append('start', params.start);
+          if (params.end) query.append('end', params.end);
 
-          const data = await this.fetchWhoop(`/cycle?${params.toString()}`);
-          // Extract HRV from cycle data
+          const data = await this.fetchWhoop(`/cycle?${query.toString()}`);
           const hrvData = data.records?.map((cycle: any) => ({
             created_at: cycle.created_at,
             hrv_rmssd_milli: cycle.score?.hrv_rmssd_milli,
@@ -328,12 +303,7 @@ class WhoopMCPServer {
           }));
 
           return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(hrvData || [], null, 2),
-              },
-            ],
+            content: [{ type: 'text', text: JSON.stringify(hrvData || [], null, 2) }],
           };
         }
 
